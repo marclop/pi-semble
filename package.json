@@ -1,0 +1,24 @@
+{
+  "name": "pi-semble",
+  "version": "0.1.0",
+  "description": "Pi extension that exposes Semble code search as a tool.",
+  "type": "module",
+  "license": "MIT",
+  "author": {
+    "name": "Jonathan Stevano",
+    "url": "https://github.com/hoverflow"
+  },
+  "keywords": ["pi-package", "pi-extension", "code-search", "semble"],
+  "main": "./index.ts",
+  "files": ["index.ts", "README.md", "package.json"],
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "scripts": {
+    "check": "echo 'no checks configured'"
+  }
+}

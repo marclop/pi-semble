@@ -1,0 +1,136 @@
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { Type } from "typebox";
+
+const searchParams = Type.Object({
+  action: Type.Literal("search"),
+  query: Type.String({ description: "Natural language or code query." }),
+  repo: Type.Optional(Type.String({ description: "Local directory path or git URL to search. Defaults to the current project directory." })),
+  mode: Type.Optional(
+    Type.Union([
+      Type.Literal("hybrid"),
+      Type.Literal("semantic"),
+      Type.Literal("bm25"),
+    ]),
+  ),
+  top_k: Type.Optional(Type.Integer({ minimum: 1, description: "Number of results to return." })),
+  include_text_files: Type.Optional(Type.Boolean({ description: "Also index non-code text files." })),
+});
+
+const findRelatedParams = Type.Object({
+  action: Type.Literal("find_related"),
+  file_path: Type.String({ description: "Path as shown in Semble search results." }),
+  line: Type.Integer({ minimum: 1, description: "1-indexed line number." }),
+  repo: Type.Optional(Type.String({ description: "Local directory path or git URL to search. Defaults to the current project directory." })),
+  top_k: Type.Optional(Type.Integer({ minimum: 1, description: "Number of related chunks to return." })),
+  include_text_files: Type.Optional(Type.Boolean({ description: "Also index non-code text files." })),
+});
+
+const params = Type.Union([searchParams, findRelatedParams], {
+  description: "Run Semble code search or find related code snippets.",
+});
+
+type ToolInput =
+  | {
+      action: "search";
+      query: string;
+      repo?: string;
+      mode?: "hybrid" | "semantic" | "bm25";
+      top_k?: number;
+      include_text_files?: boolean;
+    }
+  | {
+      action: "find_related";
+      file_path: string;
+      line: number;
+      repo?: string;
+      top_k?: number;
+      include_text_files?: boolean;
+    };
+
+async function runSemble(pi: ExtensionAPI, args: string[], signal: AbortSignal | undefined) {
+  try {
+    return await pi.exec("uvx", ["--from", "semble[mcp]", "semble", ...args], { signal });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      stdout: "",
+      stderr: message,
+      code: 127,
+      killed: false,
+    };
+  }
+}
+
+function formatFailure(hint: string, stdout: string, stderr: string, code: number | undefined) {
+  const parts = [hint];
+  const out = stdout.trim();
+  const err = stderr.trim();
+  if (out) parts.push("\n\nstdout:\n" + out);
+  if (err) parts.push("\n\nstderr:\n" + err);
+  if (typeof code === "number") parts.push(`\n\nexit code: ${code}`);
+  parts.push(
+    "\n\nTip: install uv from https://docs.astral.sh/uv/getting-started/installation/ or set a custom runner by wrapping this extension.",
+  );
+  return parts.join("");
+}
+
+export default function (pi: ExtensionAPI) {
+  pi.registerTool({
+    name: "semble",
+    label: "Semble",
+    description: "Fast code search for repositories, with semantic, hybrid, and related-code lookup.",
+    promptSnippet: "Prefer Semble first; use grep/find only as fallback for exhaustive literal searches or when Semble is insufficient.",
+    promptGuidelines: [
+      "Use semble first whenever the user is trying to locate relevant code, understand an implementation, or find similar snippets.",
+      "Prefer action=search with mode=hybrid for general questions.",
+      "Use action=find_related after a useful search result if you need adjacent or similar implementations.",
+      "Use grep or find only when Semble does not answer the request well enough, or when the user needs exhaustive literal/path-based matching.",
+    ],
+    parameters: params,
+    async execute(_toolCallId, input: ToolInput, signal) {
+      const repo = input.repo?.trim() || ".";
+      const includeText = input.include_text_files ? ["--include-text-files"] : [];
+      const topK = String(input.top_k ?? 5);
+
+      const result =
+        input.action === "search"
+          ? await runSemble(
+              pi,
+              ["search", input.query, repo, "-k", topK, "-m", input.mode ?? "hybrid", ...includeText],
+              signal,
+            )
+          : await runSemble(
+              pi,
+              ["find-related", input.file_path, String(input.line), repo, "-k", topK, ...includeText],
+              signal,
+            );
+
+      if (result.code !== 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: formatFailure("Semble execution failed.", result.stdout, result.stderr, result.code),
+            },
+          ],
+          details: {
+            exitCode: result.code,
+            stdout: result.stdout,
+            stderr: result.stderr,
+          },
+          isError: true,
+        };
+      }
+
+      const output = (result.stdout || result.stderr || "").trim() || "No results.";
+      return {
+        content: [{ type: "text", text: output }],
+        details: {
+          repo,
+          action: input.action,
+          raw: output,
+        },
+      };
+    },
+  });
+}
