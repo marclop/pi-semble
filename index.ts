@@ -1,32 +1,21 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
 
-const searchParams = Type.Object({
-  action: Type.Literal("search"),
-  query: Type.String({ description: "Natural language or code query." }),
-  repo: Type.Optional(Type.String({ description: "Local directory path or git URL to search. Defaults to the current project directory." })),
+const params = Type.Object({
+  action: Type.Union([Type.Literal("search"), Type.Literal("find_related")], {
+    description: "Which Semble action to run.",
+  }),
+  query: Type.Optional(Type.String({ description: "Natural language or code query." })),
+  file_path: Type.Optional(Type.String({ description: "Path as shown in Semble search results." })),
+  line: Type.Optional(Type.Integer({ minimum: 1, description: "1-indexed line number." })),
+  repo: Type.Optional(
+    Type.String({ description: "Local directory path or git URL to search. Defaults to the current project directory." }),
+  ),
   mode: Type.Optional(
-    Type.Union([
-      Type.Literal("hybrid"),
-      Type.Literal("semantic"),
-      Type.Literal("bm25"),
-    ]),
+    Type.Union([Type.Literal("hybrid"), Type.Literal("semantic"), Type.Literal("bm25")]),
   ),
   top_k: Type.Optional(Type.Integer({ minimum: 1, description: "Number of results to return." })),
   include_text_files: Type.Optional(Type.Boolean({ description: "Also index non-code text files." })),
-});
-
-const findRelatedParams = Type.Object({
-  action: Type.Literal("find_related"),
-  file_path: Type.String({ description: "Path as shown in Semble search results." }),
-  line: Type.Integer({ minimum: 1, description: "1-indexed line number." }),
-  repo: Type.Optional(Type.String({ description: "Local directory path or git URL to search. Defaults to the current project directory." })),
-  top_k: Type.Optional(Type.Integer({ minimum: 1, description: "Number of related chunks to return." })),
-  include_text_files: Type.Optional(Type.Boolean({ description: "Also index non-code text files." })),
-});
-
-const params = Type.Union([searchParams, findRelatedParams], {
-  description: "Run Semble code search or find related code snippets.",
 });
 
 type ToolInput =
@@ -91,6 +80,22 @@ export default function (pi: ExtensionAPI) {
       const repo = input.repo?.trim() || ".";
       const includeText = input.include_text_files ? ["--include-text-files"] : [];
       const topK = String(input.top_k ?? 5);
+
+      if (input.action === "search" && !input.query) {
+        return {
+          content: [{ type: "text", text: "Missing required field: query" }],
+          details: { error: true },
+          isError: true,
+        };
+      }
+
+      if (input.action === "find_related" && (!input.file_path || typeof input.line !== "number")) {
+        return {
+          content: [{ type: "text", text: "Missing required fields: file_path and line" }],
+          details: { error: true },
+          isError: true,
+        };
+      }
 
       const result =
         input.action === "search"
