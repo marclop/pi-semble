@@ -11,9 +11,6 @@ const params = Type.Object({
   repo: Type.Optional(
     Type.String({ description: "Local directory path or git URL to search. Defaults to the current project directory." }),
   ),
-  mode: Type.Optional(
-    Type.Union([Type.Literal("hybrid"), Type.Literal("semantic"), Type.Literal("bm25")]),
-  ),
   top_k: Type.Optional(Type.Integer({ minimum: 1, description: "Number of results to return." })),
   include_text_files: Type.Optional(Type.Boolean({ description: "Also index non-code text files." })),
 });
@@ -23,7 +20,6 @@ type ToolInput =
       action: "search";
       query: string;
       repo?: string;
-      mode?: "hybrid" | "semantic" | "bm25";
       top_k?: number;
       include_text_files?: boolean;
     }
@@ -67,18 +63,18 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "semble",
     label: "Semble",
-    description: "Fast code search for repositories, with semantic, hybrid, and related-code lookup.",
+    description: "Fast code search for repositories, with semantic and related-code lookup.",
     promptSnippet: "Prefer Semble first; use grep/find only as fallback for exhaustive literal searches or when Semble is insufficient.",
     promptGuidelines: [
       "Use semble first whenever the user is trying to locate relevant code, understand an implementation, or find similar snippets.",
-      "Prefer action=search with mode=hybrid for general questions.",
+      "Prefer action=search for general questions; use find-related for adjacent code.",
       "Use action=find_related after a useful search result if you need adjacent or similar implementations.",
       "Use grep or find only when Semble does not answer the request well enough, or when the user needs exhaustive literal/path-based matching.",
     ],
     parameters: params,
     async execute(_toolCallId, input: ToolInput, signal) {
       const repo = input.repo?.trim() || ".";
-      const includeText = input.include_text_files ? ["--include-text-files"] : [];
+      const includeText = input.include_text_files ? ["--content", "all"] : [];
       const topK = String(input.top_k ?? 5);
 
       if (input.action === "search" && !input.query) {
@@ -101,7 +97,7 @@ export default function (pi: ExtensionAPI) {
         input.action === "search"
           ? await runSemble(
               pi,
-              ["search", input.query, repo, "-k", topK, "-m", input.mode ?? "hybrid", ...includeText],
+              ["search", input.query, repo, "-k", topK, ...includeText],
               signal,
             )
           : await runSemble(
